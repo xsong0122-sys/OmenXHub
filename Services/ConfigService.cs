@@ -37,6 +37,9 @@ namespace OmenSuperHub.Services {
     // 压平 smart 层 EMA 系数到 0.1。一个开关统管两条路径,用户显式开启才改变现有行为。
     public static bool SmartFanIdleLambda = false;
     public static string TempSensitivity = "medium";
+    // ponytail: 控温依据 — "package"(封装温度)/"average"(核心平均温度)。全局配置,不随预设切换。
+    // "average" 在该平台无 per-core 传感器(如 AMD Zen)时静默回退 package(见 HardwareService)。
+    public static string CpuTempSource = "package";
     public static string CpuPower = "max";
     public static string GpuPower = "max";
     public static int GpuClock = 0;
@@ -270,6 +273,7 @@ namespace OmenSuperHub.Services {
             case "UseIrForFanCurve": key.SetValue("UseIrForFanCurve", UseIrForFanCurve ? 1 : 0); break;
             case "SmartFanIdleLambda": key.SetValue("SmartFanIdleLambda", SmartFanIdleLambda ? 1 : 0); break;
             case "TempSensitivity": key.SetValue("TempSensitivity", TempSensitivity); break;
+            case "CpuTempSource": key.SetValue("CpuTempSource", CpuTempSource); break;
             case "CpuPower": key.SetValue("CpuPower", CpuPower); break;
             case "GpuPower": key.SetValue("GpuPower", GpuPower); break;
             case "GpuClock": key.SetValue("GpuClock", GpuClock); break;
@@ -527,6 +531,9 @@ namespace OmenSuperHub.Services {
           UseIrForFanCurve = RegInt(key, "UseIrForFanCurve", 0) != 0;
           SmartFanIdleLambda = RegInt(key, "SmartFanIdleLambda", 0) != 0;
           TempSensitivity = RegStr(key, "TempSensitivity", "medium");
+          // ponytail: 非法值回退 package(与 OSH Program.Config.cs 同口径)。
+          CpuTempSource = RegStr(key, "CpuTempSource", "package");
+          if (CpuTempSource != "average") CpuTempSource = "package";
           CpuPower = RegStr(key, "CpuPower", "max");
           GpuPower = RegStr(key, "GpuPower", "max");
           GpuClock = RegInt(key, "GpuClock", 0);

@@ -65,16 +65,33 @@ namespace OmenSuperHub.Services {
     // Internal state
     // ponytail: Storage/Motherboard group 启动时常开,不按勾选动态开/关 LHM Computer。代价是这两个 group
     // 进入 800ms 轮询(每 group 1-3 个传感器,微秒级),避免 Open/Close 动态增删 group 的复杂度。
-    public static LibreComputer LibreComputer = new LibreComputer() {
+    public static LibreComputer LibreComputer = new LibreComputer(new LhmSettings()) {
       IsCpuEnabled = true, IsGpuEnabled = true,
       IsStorageEnabled = true, IsMotherboardEnabled = true,
     };
+
+    // ponytail: LHM 动态设置桥 —— 仅 "ReadCoreTemperatures" 按控温依据实时取值(IntelCpu.Update 每次读),
+    // 其余键返回默认值,语义等同 LHM 内置的 Computer.Settings(无持久化)。切换控温依据即时生效。
+    sealed class LhmSettings : LibreHardwareMonitor.Hardware.ISettings {
+      public bool Contains(string name) => false;
+      public void SetValue(string name, string value) { }
+      public void Remove(string name) { }
+      public string GetValue(string name, string value)
+        => name == "ReadCoreTemperatures"
+             ? (ConfigService.CpuTempSource == "average" ? "true" : "false")
+             : value;
+    }
 
     // ═══ 额外温度传感器 — 固定候选清单(稳定唯一 ID;UI 显示名见 App/Strings.cs 的 SysGpuHotSpot 等) ═══
     // ponytail: 固定清单不复用 OMEN WMI 0x23 那路(IR/Ambient/PCH/VR 已在 Dashboard 独立显示,纳入本管理会双重)
     public static readonly string[] ExtraSensorIds = {
       "GPUNV_HOTSPOT", "CPU_COREMAX", "CPU_COREAVG", "CPU_TJMAX_DISTANCE",
       "STORAGE_NVME_0", "MOTHERBOARD_SUPERIO",
+    };
+    // ponytail: 由逐核 MSR 派生的三个显示项 —— 控温依据=封装时 LHM gate 掉逐核读,这三项
+    // 应同步隐藏(清缓存),避免残留核心平均依据下的陈旧值。
+    public static readonly string[] CoreDerivedSensorIds = {
+      "CPU_COREMAX", "CPU_COREAVG", "CPU_TJMAX_DISTANCE",
     };
     // ID → 当前温度(未读到=负数)。每轮 QueryHardware 按"读到才覆写"语义,读不到保留上次值(避免 UI 抖动)。
     static readonly Dictionary<string, float> _extraRaw = new();
@@ -234,9 +251,20 @@ namespace OmenSuperHub.Services {
       // ponytail: 不每轮 Clear —— 改"读到了就覆盖,读不到保留上次值",避免 LHM 间歇读不到
       // (尤其 Intel Core Max/Distance to TjMax 启动初期读不到)导致 UI 抖动出 "-"
       foreach (var id in ExtraSensorIds) _extraSeenThisTick[id] = false;
+      // ponytail: 控温依据=封装时 LHM 不逐核读(gate),逐核派生的三个显示项应一起消失 ——
+      // 清掉"曾读到"记录与缓存(否则 read-to-preserve 会让上个依据的陈旧值继续显示)。
+      if (ConfigService.CpuTempSource != "average") {
+        foreach (string id in CoreDerivedSensorIds) {
+          _extraRaw.Remove(id);
+          _extraSmoothed.Remove(id);
+        }
+      }
 
       // ponytail: HWiNFO Read 启用时，跳过 LibreHardwareMonitor 传感器轮询及后续覆盖
       float libreTempCPU = -300;
+      // ponytail: 本 tick 的核心平均温度(仅 Intel "Core Average" 命中时写入),供"控温依据"切换判定;
+      // 不用 _extraRaw 是因为它"读不到保留上次值",跨 tick 粘滞会让平均温度在丢失后才延迟回退。
+      float libreTempCoreAvg = -300;
       float librePowerCPU = -1;
       // ponytail: per-snapshot max so CPUClock/GPUClock reflect current clock, not historical peak.
       float snapCpuClock = 0;
@@ -284,7 +312,7 @@ namespace OmenSuperHub.Services {
                 int v = (int)sensor.Value.GetValueOrDefault();
                 if (v >= 1 && v <= 120) {
                   if (sensor.Name == "Core Max")         { _extraRaw["CPU_COREMAX"] = v; _extraSeenThisTick["CPU_COREMAX"] = true; }
-                  if (sensor.Name == "Core Average")    { _extraRaw["CPU_COREAVG"] = v; _extraSeenThisTick["CPU_COREAVG"] = true; }
+                  if (sensor.Name == "Core Average")    { _extraRaw["CPU_COREAVG"] = v; _extraSeenThisTick["CPU_COREAVG"] = true; libreTempCoreAvg = v; }
                   // ponytail: LHM 的距离传感器是每核一条 "Core #N Distance to TjMax"(IntelCpu.cs:395)，
                   // 精确名永远匹配不到导致 UI 恒为 "-"。距离 = TjMax − 温度，取最小 = 最热核，
                   // 与"CPU 核心最高"同语义；每 tick 首见直接覆写，避免跨 tick 粘滞旧值。
@@ -373,6 +401,20 @@ namespace OmenSuperHub.Services {
       // sensor glitches from polluting EMA and triggering wrong fan behavior
       if (libreTempCPU >= 15 && libreTempCPU <= 120)
         tempCPU = libreTempCPU;
+      // ponytail: 控温依据切换 —— 选"核心平均"且该平台有 per-core 传感器时用核心平均,
+      // 否则静默回退封装温度(如 AMD Zen 无 "Core Average");仅在翻转时记一次日志,避免刷屏。
+      // 生效温度写入 _rawCpuTemp,风扇曲线/浮窗/托盘/仪表盘等所有消费点统一走该依据。
+      if (ConfigService.CpuTempSource == "average") {
+        if (libreTempCoreAvg >= 15 && libreTempCoreAvg <= 120) {
+          tempCPU = libreTempCoreAvg;
+          _cpuAvgFallbackLogged = false;
+        } else if (!_cpuAvgFallbackLogged) {
+          _cpuAvgFallbackLogged = true;
+          Logger.Error("CPU 核心平均温度不可用（该平台无 per-core 传感器），已回退到封装温度。");
+        }
+      } else {
+        _cpuAvgFallbackLogged = false;
+      }
       _rawCpuTemp = tempCPU;
       CPUTemp = tempCPU * RespondSpeed + CPUTemp * (1.0f - RespondSpeed);
 
@@ -524,6 +566,8 @@ namespace OmenSuperHub.Services {
     public static float GetDisplayGpuPower() => GpuPowerUsable
       ? Math.Min(Math.Max(_gpuPowerDisplay, 0), GpuPowerDisplayMaxW) : 0;
     static float _rawCpuTemp, _rawGpuTemp, _rawIrTemp = -1;
+    // ponytail: 选"核心平均"却拿不到该传感器时的回退日志去重标志(仅翻转时记一次)。
+    static bool _cpuAvgFallbackLogged;
 
     // ponytail: 最小可运行检查——非法样本不能刷新状态，显示 getter 不能偷偷推进 EMA。
     public static string SelfCheck() {

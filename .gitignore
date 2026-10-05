@@ -24,6 +24,7 @@ packages/
 
 # VS / IDE
 .vs/
+.codegraph/
 *.user
 *.suo
 *.userprefs

@@ -241,6 +241,7 @@ namespace OmenSuperHub.Pages {
         case "low": SensitivityCombo.SelectedIndex = 3; break;
         default: SensitivityCombo.SelectedIndex = 2; break;
       }
+      TempSourceCombo.SelectedIndex = ConfigService.CpuTempSource == "average" ? 1 : 0;
       AutoFanProtectToggle.IsChecked = ConfigService.AutoFanProtect == "on";
       FanSyncToggle.IsChecked = ConfigService.FanSync;
       IrFanCurveToggle.IsChecked = ConfigService.UseIrForFanCurve;
@@ -401,6 +402,15 @@ namespace OmenSuperHub.Pages {
         case "medium": HardwareService.RespondSpeed = 0.1f; break;
         case "low": HardwareService.RespondSpeed = 0.04f; break;
       }
+    }
+
+    // ponytail: 控温依据切换 —— 仅写全局配置,实际生效温度由 HardwareService.QueryHardware 每 tick 读取。
+    void TempSource_SelectionChanged(object s, SelectionChangedEventArgs e) {
+      if (_loading) return;
+      int idx = TempSourceCombo.SelectedIndex;
+      if (idx < 0) return;
+      ConfigService.CpuTempSource = idx == 1 ? "average" : "package";
+      ConfigService.Save("CpuTempSource");
     }
 
     void AutoFanProtectToggle_Changed(object sender, RoutedEventArgs e) {

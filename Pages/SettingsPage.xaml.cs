@@ -23,6 +23,7 @@ namespace OmenSuperHub.Pages {
       if (!_screenOptionsBuilt) { BuildScreenOptions(); _screenOptionsBuilt = true; }
       if (!_extraSensorsBuilt) { BuildExtraTempSensorOptions(); _extraSensorsBuilt = true; }
       if (!_gpuSelectorBuilt) { BuildGpuSelectorOptions(); _gpuSelectorBuilt = true; }
+      RefreshCoreDerivedSensorAvailability();
       _loading = false;
       // ponytail: Loaded 里 Build 三个选择器(可视树填充),缓存页二次 Loaded 会空白 —
       // 显式 UpdateLayout 强制一遍,对齐 LightingPage/CoreKeepPage 的修法。
@@ -330,6 +331,19 @@ namespace OmenSuperHub.Pages {
         cb.Checked += ExtraTempSensor_Changed;
         cb.Unchecked += ExtraTempSensor_Changed;
         ExtraTempSensorPanel.Children.Add(cb);
+      }
+    }
+
+    // ponytail: 控温依据=封装时 LHM 不逐核读(gate),三个核心派生显示项不可用 ——
+    // 复选框置灰并标注原因。每次 Loaded 刷新(用户可能在风扇页改依据后再进设置页)。
+    void RefreshCoreDerivedSensorAvailability() {
+      bool avg = ConfigService.CpuTempSource == "average";
+      foreach (System.Windows.Controls.CheckBox cb in ExtraTempSensorPanel.Children) {
+        string id = cb.Tag as string;
+        if (id == null || Array.IndexOf(Services.HardwareService.CoreDerivedSensorIds, id) < 0) continue;
+        cb.IsEnabled = avg;
+        string label = ExtraTempLabel(id);
+        cb.Content = avg ? label : label + " (" + Strings.CpuTempSourceAvgRequired + ")";
       }
     }
 

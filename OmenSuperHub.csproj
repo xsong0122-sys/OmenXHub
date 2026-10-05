@@ -36,7 +36,6 @@
   <!-- NuGet Packages -->
   <ItemGroup>
     <PackageReference Include="HidSharp" Version="2.1.0" />
-    <PackageReference Include="Microsoft.Windows.WDK.x64" Version="10.0.28000.1839" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="NvAPIWrapper.Net" Version="0.8.1.101" />
@@ -180,9 +179,9 @@
   <!-- Exclude old packages/ folder from reference resolution -->
   <PropertyGroup>
     <ResolveAssemblyReferencesSilentlyPreferTargetFrameworkDirectory>true</ResolveAssemblyReferencesSilentlyPreferTargetFrameworkDirectory>
-    <!-- ponytail: WDK 10.0.28000.1839 wants SDK.CPP.x64 exactly 10.0.28000 but only 10.0.28000.1721 is available;
-         patch-level difference is harmless for build. Suppress the fall-back warning.
-         Also suppress MSB3245/MSB3246 — Mono.Posix only loaded via reflection on Linux path;
+    <!-- ponytail: 已移除未使用的 Microsoft.Windows.WDK.x64 引用(其 SDK.CPP.x64 依赖合计 ~166MB,
+         代码无任何 Windows.Win32/WDK 用法,OSH 工程同样没有)。
+         Suppress MSB3245/MSB3246 — Mono.Posix only loaded via reflection on Linux path;
          never executed on Windows-only OmenSuperHub build. MSB3277 — Unsafe 6.0.0 vs HP 链 6.0.3.0
          的参考解析冲突已由 app.config 重定向 6.0.3.0→6.0.0.0 消解,仅剩编译期提示。 -->
     <NoWarn>$(NoWarn);NU1603;MSB3245;MSB3246;MSB3277</NoWarn>

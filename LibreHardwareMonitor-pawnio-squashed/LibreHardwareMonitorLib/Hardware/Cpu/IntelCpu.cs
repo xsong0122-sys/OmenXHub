@@ -23,6 +23,11 @@ internal sealed class IntelCpu : GenericCpu
     private readonly Sensor _coreVoltage;
     private readonly Sensor[] _distToTjMaxTemperatures;
 
+    // ponytail: 逐核 MSR 读取 gate —— 由上层设置 ReadCoreTemperatures 驱动(控温依据=核心平均时为 true)。
+    // 关闭时跳过每 tick 的逐核读以省开销,并将 Core Max / Core Average / Distance to TjMax 三组
+    // 传感器 Deactivate(从 Sensors 列表移除,UI 自动隐藏);重新开启时再 Activate 还原。
+    private bool _coreTempsActive;
+
     private readonly uint[] _energyStatusMsrs = { MSR_PKG_ENERGY_STATUS, MSR_PP0_ENERGY_STATUS, MSR_PP1_ENERGY_STATUS, MSR_DRAM_ENERGY_STATUS, MSR_PLATFORM_ENERGY_STATUS };
     private readonly uint[] _lastEnergyConsumed;
     private readonly DateTime[] _lastEnergyTime;
@@ -486,7 +491,36 @@ internal sealed class IntelCpu : GenericCpu
             ActivateSensor(_coreVIDs[i]);
         }
 
+        // 上面已无条件激活三组逐核派生传感器(无 per-core 支持的 CPU 上为 null/空数组);
+        // _coreTempsActive 与之一致,交由 Update() 按 ReadCoreTemperatures 立即收敛到正确状态。
+        _coreTempsActive = true;
         Update();
+    }
+
+    // ponytail: 统一切换三组逐核派生传感器的激活态(=UI 可见性)。ActivateSensor/DeactivateSensor
+    // 内部是 HashSet Add/Remove 且幂等;这里仅在 gate 状态翻转时调用,避免每 tick 触发
+    // SensorAdded/SensorRemoved 事件。
+    private void SetCoreSensorsActive(bool active)
+    {
+        SetSensorActive(_coreMax, active);
+        SetSensorActive(_coreAvg, active);
+
+        foreach (Sensor s in _coreTemperatures)
+            SetSensorActive(s, active);
+
+        foreach (Sensor s in _distToTjMaxTemperatures)
+            SetSensorActive(s, active);
+    }
+
+    private void SetSensorActive(Sensor sensor, bool active)
+    {
+        if (sensor == null)
+            return;
+
+        if (active)
+            ActivateSensor(sensor);
+        else
+            DeactivateSensor(sensor);
     }
 
     public float EnergyUnitsMultiplier { get; }
@@ -537,40 +571,54 @@ internal sealed class IntelCpu : GenericCpu
     {
         base.Update();
 
-        float coreMax = float.MinValue;
-        float coreAvg = 0;
-        uint eax;
-
-        for (int i = 0; i < _coreTemperatures.Length; i++)
+        // ponytail: 控温依据 gate —— 仅当上层设置 ReadCoreTemperatures="true"(即 UI 选了"核心平均")
+        // 才逐核读 MSR。选"封装温度"时整段跳过:省掉每 tick 的逐核 MSR 读取(每核一次
+        // IA32_THERM_STATUS),并 Deactivate 三组逐核派生传感器。
+        bool readCores = _settings.GetValue("ReadCoreTemperatures", "false") == "true";
+        if (readCores != _coreTempsActive)
         {
-            // if reading is valid
-            if (_pawnModule.ReadMsr(IA32_THERM_STATUS_MSR, out eax, out _, _cpuId[i][0].Affinity) && (eax & 0x80000000) != 0)
-            {
-                // get the dist from tjMax from bits 22:16
-                float deltaT = (eax & 0x007F0000) >> 16;
-                float tjMax = _coreTemperatures[i].Parameters[0].Value;
-                float tSlope = _coreTemperatures[i].Parameters[1].Value;
-                _coreTemperatures[i].Value = tjMax - (tSlope * deltaT);
-
-                coreAvg += (float)_coreTemperatures[i].Value;
-                if (coreMax < _coreTemperatures[i].Value)
-                    coreMax = (float)_coreTemperatures[i].Value;
-
-                _distToTjMaxTemperatures[i].Value = deltaT;
-            }
-            else
-            {
-                _coreTemperatures[i].Value = null;
-                _distToTjMaxTemperatures[i].Value = null;
-            }
+            _coreTempsActive = readCores;
+            SetCoreSensorsActive(readCores);
         }
 
-        //calculate average cpu temperature over all cores
-        if (_coreMax != null && coreMax != float.MinValue)
+        uint eax;
+
+        if (readCores)
         {
-            _coreMax.Value = coreMax;
-            coreAvg /= _coreTemperatures.Length;
-            _coreAvg.Value = coreAvg;
+            float coreMax = float.MinValue;
+            float coreAvg = 0;
+
+            for (int i = 0; i < _coreTemperatures.Length; i++)
+            {
+                // if reading is valid
+                if (_pawnModule.ReadMsr(IA32_THERM_STATUS_MSR, out eax, out _, _cpuId[i][0].Affinity) && (eax & 0x80000000) != 0)
+                {
+                    // get the dist from tjMax from bits 22:16
+                    float deltaT = (eax & 0x007F0000) >> 16;
+                    float tjMax = _coreTemperatures[i].Parameters[0].Value;
+                    float tSlope = _coreTemperatures[i].Parameters[1].Value;
+                    _coreTemperatures[i].Value = tjMax - (tSlope * deltaT);
+
+                    coreAvg += (float)_coreTemperatures[i].Value;
+                    if (coreMax < _coreTemperatures[i].Value)
+                        coreMax = (float)_coreTemperatures[i].Value;
+
+                    _distToTjMaxTemperatures[i].Value = deltaT;
+                }
+                else
+                {
+                    _coreTemperatures[i].Value = null;
+                    _distToTjMaxTemperatures[i].Value = null;
+                }
+            }
+
+            //calculate average cpu temperature over all cores
+            if (_coreMax != null && coreMax != float.MinValue)
+            {
+                _coreMax.Value = coreMax;
+                coreAvg /= _coreTemperatures.Length;
+                _coreAvg.Value = coreAvg;
+            }
         }
 
         if (_packageTemperature != null)

@@ -1,4 +1,4 @@
-﻿<Page x:Class="OmenSuperHub.Pages.FanPage"
+<Page x:Class="OmenSuperHub.Pages.FanPage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
@@ -218,6 +218,24 @@
                    <ComboBoxItem Content="{x:Static app:Strings.FanRespHigh}"/>
                    <ComboBoxItem Content="{x:Static app:Strings.FanRespMedium}"/>
                    <ComboBoxItem Content="{x:Static app:Strings.FanRespLow}"/>
+                 </ComboBox>
+               </Grid>
+             </StackPanel>
+             <StackPanel x:Name="TempSourceCard" Margin="0,0,0,8">
+               <Grid>
+                 <Grid.ColumnDefinitions>
+                   <ColumnDefinition Width="*"/>
+                   <ColumnDefinition Width="Auto"/>
+                 </Grid.ColumnDefinitions>
+                 <StackPanel>
+                   <TextBlock Text="{x:Static app:Strings.CpuTempSource}" FontSize="{DynamicResource FontSizeBody}" VerticalAlignment="Center"/>
+                   <TextBlock Text="{x:Static app:Strings.CpuTempSourceDesc}" FontSize="{DynamicResource FontSizeCaption}"
+                              Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                 </StackPanel>
+                 <ComboBox x:Name="TempSourceCombo" Grid.Column="1" MinWidth="140" VerticalAlignment="Center"
+                           SelectionChanged="TempSource_SelectionChanged">
+                   <ComboBoxItem Content="{x:Static app:Strings.CpuTempSourcePackage}"/>
+                   <ComboBoxItem Content="{x:Static app:Strings.CpuTempSourceAverage}"/>
                  </ComboBox>
                </Grid>
              </StackPanel>

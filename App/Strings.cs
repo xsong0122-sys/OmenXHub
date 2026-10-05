@@ -346,6 +346,17 @@ namespace OmenSuperHub {
     public static string FanConfigHeading => T("风扇配置", "風扇配置", "Fan Config");
     public static string FanCurveHeading => T("自定义曲线", "自訂曲線", "Custom Curve");
     public static string TempSensitivityHeading => T("温度灵敏度", "溫度靈敏度", "Temp Sensitivity");
+    public static string CpuTempSource => T("控温依据", "控溫依據", "Temp Control Source");
+    public static string CpuTempSourcePackage => T("封装温度", "封裝溫度", "Package Temp");
+    public static string CpuTempSourceAverage => T("核心平均温度", "核心平均溫度", "Core Average");
+    public static string CpuTempSourceDesc => T(
+      "风扇曲线与温控采用的 CPU 温度依据。核心平均需 CPU 逐核传感器(Intel);选择封装温度时会停用「核心最高/核心平均/距 TjMax」三个显示项。",
+      "風扇曲線與溫控採用的 CPU 溫度依據。核心平均需 CPU 逐核感測器(Intel);選擇封裝溫度時會停用「核心最高/核心平均/距 TjMax」三個顯示項。",
+      "CPU temperature source for fan curves and thermal control. Core Average requires per-core sensors (Intel); selecting Package disables the Core Max / Core Average / TjMax Distance display rows.");
+    public static string CpuTempSourceAvgRequired => T(
+      "需控温依据选「核心平均温度」",
+      "需控溫依據選「核心平均溫度」",
+      "requires Core Average temp source");
     public static string CleanCreekHeading => T("风扇除尘", "風扇除塵", "Fan Dust Removal");
     public static string FanCurveCPULabel => T("CPU 曲线", "CPU 曲線", "CPU Curve");
     public static string FanCurveGPULabel => T("GPU 曲线", "GPU 曲線", "GPU Curve");
