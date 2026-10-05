@@ -446,22 +446,33 @@ namespace OmenSuperHub.Pages {
     void RefreshStorage() {
       if ((DateTime.UtcNow - _lastStorageRefreshUtc).TotalSeconds < 10) return;
       _lastStorageRefreshUtc = DateTime.UtcNow;
-      StorageBarCanvas.Children.Clear();
-      // ponytail: 柱状图 — 每盘一根竖条。Canvas 220x132:柱宽 24,间隔 6,柱高上限 96(line 12+12+96=120)。
-      // 盘符贴在柱底 96px 处,sizeStr 贴在柱顶上方。上限:>8 盘降级为文字提示(220/(24+6)≈7 盘能整字容纳)。
-      var drives = new List<(string label, double pct, string sizeStr)>();
-      foreach (var drive in DriveInfo.GetDrives()) {
-        if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
-        double totalGB = drive.TotalSize / (1024.0 * 1024 * 1024);
-        double freeGB = drive.TotalFreeSpace / (1024.0 * 1024 * 1024);
-        if (totalGB <= 0) continue;
-        double usedGB = totalGB - freeGB;
-        double pct = usedGB / totalGB * 100;
-        string label = drive.Name.TrimEnd('\\');
-        string sizeStr = totalGB >= 1000 ? $"{usedGB / 1024:F1}/{totalGB / 1024:F1}T" : $"{usedGB:F0}/{totalGB:F0}G";
-        drives.Add((label, pct, sizeStr));
-      }
+      // ponytail: DriveInfo 枚举 + 逐盘容量读是同步磁盘 I/O(见上方节流注释),移出 UI 线程;
+      // Canvas 子元素必须 UI 线程创建,故采集完回 UI 线程再画。节流字段已先更新,
+      // 采集期间的重入调用直接早退,不会并发采集。
+      Task.Run(() => {
+        var drives = new List<(string label, double pct, string sizeStr)>();
+        try {
+          foreach (var drive in DriveInfo.GetDrives()) {
+            if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+            double totalGB = drive.TotalSize / (1024.0 * 1024 * 1024);
+            double freeGB = drive.TotalFreeSpace / (1024.0 * 1024 * 1024);
+            if (totalGB <= 0) continue;
+            double usedGB = totalGB - freeGB;
+            double pct = usedGB / totalGB * 100;
+            string label = drive.Name.TrimEnd('\\');
+            string sizeStr = totalGB >= 1000 ? $"{usedGB / 1024:F1}/{totalGB / 1024:F1}T" : $"{usedGB:F0}/{totalGB:F0}G";
+            drives.Add((label, pct, sizeStr));
+          }
+        } catch { }
+        Dispatcher.BeginInvoke(new Action(() => RenderStorageBars(drives)), DispatcherPriority.Background);
+      });
+    }
 
+    // ponytail: 柱状图渲染(必须 UI 线程)。每盘一根竖条。Canvas 220x132:柱宽 24,间隔 6,
+    // 柱高上限 96(line 12+12+96=120)。盘符贴在柱底 96px 处,sizeStr 贴在柱顶上方。
+    // 上限:>8 盘降级为文字提示(220/(24+6)≈7 盘能整字容纳)。
+    void RenderStorageBars(List<(string label, double pct, string sizeStr)> drives) {
+      StorageBarCanvas.Children.Clear();
       if (drives.Count == 0) {
         var none = new TextBlock {
           Text = "-", FontSize = 11,
@@ -1390,8 +1401,11 @@ try { kb = GetKeyboardTypeName((NbKeyboardLightingType)(kbRaw = (int)GetKeyboard
 
     async Task RefreshNvidiaPowerLimitAsync() {
       try {
-        await Task.Delay(500);
-        var powerLimits = GpuAppManager.GetGpuPowerLimits();
+        // ponytail: ConfigureAwait(false) + Task.Run —— GetGpuPowerLimits 内部 spawn
+        // nvidia-smi 并 WaitForExit,是秒级阻塞;默认续体会捕获 UI 上下文回到 UI 线程执行,
+        // 等于"打开后约 0.5s 再卡一次"。整段采集留在后台,只有刷文本回 UI 线程。
+        await Task.Delay(500).ConfigureAwait(false);
+        var powerLimits = await Task.Run(() => GpuAppManager.GetGpuPowerLimits()).ConfigureAwait(false);
         if (powerLimits[0] > 0) {
           await Dispatcher.InvokeAsync(() => {
             SysNvidiaPowerText.Text = Strings.SysNvidiaPowerLimitText($"{powerLimits[0]:F0}W / {powerLimits[1]:F0}W");
@@ -1487,18 +1501,25 @@ try { kb = GetKeyboardTypeName((NbKeyboardLightingType)(kbRaw = (int)GetKeyboard
     }
 
     void RefreshGpuAppList() {
-      var apps = new List<GpuAppManager.GpuAppInfo>();
-      try { apps = GpuAppManager.GetGpuApps(); } catch { }
-      // 精简卡计数
-      GpuAppCountText.Text = Strings.GpuAppCount(apps.Count);
-      // 弹窗 ListBox (如果已打开)
-      if (GpuAppList != null) {
-        GpuAppList.Items.Clear();
-        foreach (var app in apps) {
-          var item = new ListBoxItem { Content = app.ProcessName + " (" + app.FilePath + ")", Tag = app };
-          GpuAppList.Items.Add(item);
-        }
-      }
+      // ponytail: GetGpuApps 内部 spawn nvidia-smi 并 WaitForExit(无超时),是秒级阻塞 I/O;
+      // 本方法经 Dispatcher.BeginInvoke 在 UI 线程执行,页面重建(隐藏到托盘后重开)时
+      // 会令"窗口已可见却点什么都没反应"。采集丢后台线程,回 UI 线程只更新控件。
+      Task.Run(() => {
+        var apps = new List<GpuAppManager.GpuAppInfo>();
+        try { apps = GpuAppManager.GetGpuApps(); } catch { }
+        Dispatcher.BeginInvoke(new Action(() => {
+          // 精简卡计数
+          GpuAppCountText.Text = Strings.GpuAppCount(apps.Count);
+          // 弹窗 ListBox (如果已打开)
+          if (GpuAppList != null) {
+            GpuAppList.Items.Clear();
+            foreach (var app in apps) {
+              var item = new ListBoxItem { Content = app.ProcessName + " (" + app.FilePath + ")", Tag = app };
+              GpuAppList.Items.Add(item);
+            }
+          }
+        }), DispatcherPriority.Background);
+      });
     }
 
     void ViewGpuApps_Click(object sender, RoutedEventArgs e) {
