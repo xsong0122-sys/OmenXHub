@@ -75,8 +75,11 @@ if ($Package) {
         exit 1
     }
 
+    # ponytail: winget 默认按用户安装到 %LOCALAPPDATA%\Programs,不在 PATH 也不在 Program Files,
+    # 故优先探测该路径,再退回系统级安装位置。
     $iscc = @(
         (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
     ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
